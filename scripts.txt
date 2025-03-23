@@ -1,0 +1,14 @@
+1. Preprocess data
+python src/preprocess.py --pdf_folder dataset/scans --output_folder dataset/images
+
+python src/test_preprocess.py --pdf dataset/scans/Constituciones\ sinodales\ Calahorra\ 1602.pdf --output dataset/test_images --page 1
+
+python src/tune_preprocessing.py --pdf dataset/scans/Constituciones\ sinodales\ Calahorra\ 1602.pdf --output dataset/tuned_images --page 1
+
+python src/test_config_on_all.py --pdf_folder dataset/scans --output_folder dataset/test_each_doc --page 1
+
+python src/process_selected.py --pdf_folder dataset/scans --output_folder dataset/processed_selected
+
+python src/test_suppress_irrelevant.py --pdf dataset/scans/Constituciones\ sinodales\ Calahorra\ 1602.pdf --output dataset/suppress_test --page 1
+
+python src/test_suppress_irrelevant.py --pdf dataset/scans/Constituciones\ sinodales\ Calahorra\ 1602.pdf --output dataset/suppress_test --page 2
