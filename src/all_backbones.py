@@ -11,21 +11,33 @@ import random
 from tqdm import tqdm
 import editdistance
 import argparse
+import yaml
 
-# Function to save the model
-def save_model(model, path="checkpoints/ocr_crnn.pth"):
-    torch.save(model.state_dict(), path)
-    print(f"Model saved to {path}")
+
+# ------------------ Load Config ------------------
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", required=True, help="Path to config YAML file")
+parser.add_argument("--json_train", default=None)
+parser.add_argument("--json_val", default=None)
+args = parser.parse_args()
+
+with open(args.config, 'r') as f:
+    cfg = yaml.safe_load(f)
+
+# Optionally restrict GPU usage
+if "CUDA_VISIBLE_DEVICES" in cfg:
+    os.environ["CUDA_VISIBLE_DEVICES"] = cfg["CUDA_VISIBLE_DEVICES"]
 
 # ------------------ Config ------------------
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-BATCH_SIZE = 128
-IMG_HEIGHT = 32
-IMG_WIDTH = 128
-NUM_WORKERS = 4
+BATCH_SIZE = cfg["batch_size"]
+IMG_HEIGHT = cfg["img_height"]
+IMG_WIDTH = cfg["img_width"]
+NUM_WORKERS = cfg["num_workers"]
 MAX_LABEL_LEN = 32
-EPOCHS = 15
-SAVE_PATH = 'checkpoints/full_parallel_textocr_crnn.pth'
+EPOCHS = cfg["epochs"]
+SAVE_PATH = f"checkpoints/{cfg['name']}_crnn.pth"
+OUTPUT_PATH = f"output/{cfg['name']}_cer.txt"
 
 # Characters supported (used for label encoding)
 CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -71,7 +83,7 @@ class TextOCRDataset(Dataset):
         cropped = self.transform(cropped)
 
         label = torch.LongTensor([CHAR2IDX[c] for c in text])
-        return cropped, label, len(label), text  # include GT text for eval
+        return cropped, label, len(label), text
 
 # ------------------ Collate ------------------
 def collate_fn(batch):
@@ -81,25 +93,26 @@ def collate_fn(batch):
     label_lengths = torch.tensor(lengths)
     return images, labels_concat, label_lengths, texts
 
-# ------------------ CRNN ------------------
-class CRNN(nn.Module):
-    def __init__(self, num_classes):
+# ------------------ Model ------------------
+class CRNN_ResNet18(nn.Module):
+    def __init__(self, num_classes, freeze_backbone=True):
         super().__init__()
-        self.cnn = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, 3, 1, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-        )
-        self.rnn = nn.LSTM(128 * 8, 256, bidirectional=True, batch_first=True, num_layers=2)
+        base = models.resnet18(pretrained=True)
+        modules = list(base.children())[:-2]
+        self.backbone = nn.Sequential(*modules)
+
+        if freeze_backbone:
+            for name, param in self.backbone.named_parameters():
+                if not name.startswith("layer4") and not name.startswith("layer3") and not name.startswith("bn1"):
+                    param.requires_grad = False
+
+        self.rnn = nn.LSTM(512, 256, bidirectional=True, batch_first=True, num_layers=2)
         self.fc = nn.Linear(512, num_classes)
 
     def forward(self, x):
-        x = self.cnn(x)
+        x = self.backbone(x)
         b, c, h, w = x.size()
-        x = x.permute(0, 3, 1, 2).contiguous()  # B x W x C x H
+        x = x.permute(0, 3, 1, 2).contiguous()
         x = x.view(b, w, c * h)
         x, _ = self.rnn(x)
         x = self.fc(x)
@@ -107,8 +120,7 @@ class CRNN(nn.Module):
 
 # ------------------ Decode ------------------
 def decode(preds):
-    preds = preds.argmax(2)
-    preds = preds.permute(1, 0)
+    preds = preds.argmax(2).permute(1, 0)
     texts = []
     for pred in preds:
         text = ''
@@ -121,8 +133,21 @@ def decode(preds):
         texts.append(text)
     return texts
 
-# ------------------ Train ------------------
+def decode_better(preds):
+    preds = preds.argmax(2).permute(1, 0)
+    texts = []
+    for pred in preds:
+        text = []
+        last = -1
+        for p in pred:
+            p = p.item()
+            if p != 0 and p != last:
+                text.append(IDX2CHAR[p])
+            last = p
+        texts.append("".join(text))
+    return texts
 
+# ------------------ Train ------------------
 def train(model, train_loader, criterion, optimizer):
     model.train()
     for epoch in range(EPOCHS):
@@ -132,7 +157,7 @@ def train(model, train_loader, criterion, optimizer):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             label_lengths = label_lengths.to(DEVICE)
 
-            logits = model(images)  # [B, W, C]
+            logits = model(images)
             log_probs = logits.permute(1, 0, 2)
             input_lengths = torch.full((logits.size(0),), log_probs.size(0), dtype=torch.long).to(DEVICE)
 
@@ -143,69 +168,62 @@ def train(model, train_loader, criterion, optimizer):
             optimizer.step()
             total_loss += loss.item()
 
-            # Optional: update tqdm with current loss
             progress_bar.set_postfix(loss=loss.item())
 
         print(f"✅ Epoch {epoch+1}/{EPOCHS} - Avg Loss: {total_loss:.4f}")
 
-    torch.save(model.state_dict(), args.checkpoint)
-    print(f"💾 Model saved to {args.checkpoint}")
+    torch.save(model.state_dict(), SAVE_PATH)
+    print(f"💾 Model saved to {SAVE_PATH}")
 
 # ------------------ Evaluate ------------------
-
 def evaluate(model, test_loader):
     model.eval()
-    total_cer = 0
-    total_chars = 0
-
     with torch.no_grad():
-        for images, _, _, gt_texts in tqdm(test_loader, desc="Evaluating", unit="batch"):
-            images = images.to(DEVICE)
-            preds = model(images)
-            decoded = decode(preds)
-            for pred, target in zip(decoded, gt_texts):
-                cer = editdistance.eval(pred, target)
-                total_cer += cer
-                total_chars += len(target)
-
-                # Optional: print sample predictions
-                # print(f"GT: {target}\nPR: {pred}\n---")
-
-    print(f"\n📊 CER: {total_cer / total_chars:.4f}")
+        for decoder_fn in [decode, decode_better]:
+            total_cer = 0
+            total_chars = 0
+            for images, _, _, gt_texts in tqdm(test_loader, desc=f"Evaluating {decoder_fn.__name__}", unit="batch"):
+                images = images.to(DEVICE)
+                preds = model(images)
+                decoded = decoder_fn(preds)
+                for pred, target in zip(decoded, gt_texts):
+                    cer = editdistance.eval(pred, target)
+                    total_cer += cer
+                    total_chars += len(target)
+            cer_value = total_cer / total_chars
+            print(f"📊 CER ({decoder_fn.__name__}): {cer_value:.4f}")
+            with open(OUTPUT_PATH, "a") as f:
+                f.write(f"{SAVE_PATH}, {decoder_fn.__name__}, CER: {cer_value:.4f}\n")
 
 # ------------------ Main ------------------
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--json_train", default=None)
-    parser.add_argument("--json_val", default=None)
-    parser.add_argument("--checkpoint", required=True)
-    args = parser.parse_args()
 
-    if args.json_train != None:
+
+    if args.json_train is not None:
         train_data = TextOCRDataset(
             json_path=args.json_train,
-            image_root='dataset/TextOCR/train_val_images/train_images',
-            max_samples=cfg['max_samples'] 
+            image_root=cfg["image_root"],
+            max_samples=cfg.get("max_samples")
         )
-
         train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn, num_workers=NUM_WORKERS)
 
-    if args.json_val != None:
+    if args.json_val is not None:
         test_data = TextOCRDataset(
             json_path=args.json_val,
-            image_root='dataset/TextOCR/train_val_images/train_images'
+            image_root=cfg["image_root"]
         )
-
         test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn, num_workers=NUM_WORKERS)
 
-    if args.json_train != None:
-        model = nn.DataParallel(CRNN(num_classes=len(CHAR2IDX) + 1)).to(DEVICE)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    model = nn.DataParallel(CRNN_ResNet18(num_classes=len(CHAR2IDX) + 1)).to(DEVICE)
+
+    if args.json_train is not None:
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-3)
         criterion = nn.CTCLoss(blank=0, zero_infinity=True)
         train(model, train_loader, criterion, optimizer)
-    elif args.json_val != None:
-        model = nn.DataParallel(CRNN(num_classes=len(CHAR2IDX) + 1)).to(DEVICE)
-        model.load_state_dict(torch.load(args.checkpoint))
+
+    if args.json_val is not None:
+        if args.json_train is None:
+            model.load_state_dict(torch.load(SAVE_PATH))
         evaluate(model, test_loader)
 
 if __name__ == '__main__':

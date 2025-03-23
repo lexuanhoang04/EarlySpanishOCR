@@ -1,0 +1,9 @@
+name: test_run
+CUDA_VISIBLE_DEVICES: "0"
+batch_size: 16
+epochs: 2
+num_workers: 4
+img_height: 32
+img_width: 128
+image_root: dataset/TextOCR/train_val_images/train_images
+max_samples: 100
