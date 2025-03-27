@@ -12,3 +12,123 @@ python src/process_selected.py --pdf_folder dataset/scans --output_folder datase
 python src/test_suppress_irrelevant.py --pdf dataset/scans/Constituciones\ sinodales\ Calahorra\ 1602.pdf --output dataset/suppress_test --page 1
 
 python src/test_suppress_irrelevant.py --pdf dataset/scans/Constituciones\ sinodales\ Calahorra\ 1602.pdf --output dataset/suppress_test --page 2
+
+2. Train and test model
+
+python src/crnn_parallel.py\
+    --json_val dataset/TextOCR/TextOCR_0.1_val.json\
+    --checkpoint checkpoints/full_parallel_textocr_crnn.pth\
+
+3. Train with ResNet 18
+a. Sanity check
+python src/all_backbones.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --config config/sanity_check.yaml
+
+b. Full
+
+4. evaluate with both decoders
+python src/all_backbones.py \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --config config/sanity_check.yaml
+
+
+python test/test_resnet18_boxDet.py\
+  --coco_train json/TextOCR_train.json\
+  --coco_val json/TextOCR_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --max_samples 1000000\
+  --pred_output json/TextOCR_val_resnet18_multibox.json\
+  --epochs 1
+
+python test/multibox_ocr_detector.py\
+  --coco_train json/TextOCR_train.json\
+  --coco_val json/TextOCR_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --max_samples 1000000\
+  --pred_output json/TextOCR_val_resnet18_multibox.json\
+  --epochs 10
+
+
+torchrun --nproc_per_node=4 test/multibox_ocr_detector_parallel.py \
+  --coco_train json/TextOCR_train.json \
+  --coco_val json/TextOCR_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --max_samples 1000000 \
+  --pred_output json/TextOCR_val_resnet18_multibox_ddp.json \
+  --epochs 10
+
+4.2 Faster-RCNN 
+  4.2.1 full
+python src/text_detection_FasterRCNN.py\
+  --json_train json/TextOCR_train.json\
+  --json_val json/TextOCR_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --epochs 10\
+  --output_json json/TextOCR_val_FasterRCNN.json
+
+  4.2.2 100 images
+
+python src/text_detection_FasterRCNN.py\
+  --json_train json/TextOCR_train_100.json\
+  --json_val json/TextOCR_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --epochs 1\
+  --output_json json/TextOCR_val_FasterRCNN_100.json
+
+5. data conversion
+  5.1 full
+
+python src/textOCR_to_COCO.py\
+  --json_path dataset/TextOCR/TextOCR_0.1_train.json\
+  --output_path json/TextOCR_train_100.json\
+  --max_samples 100
+
+
+  5.2 100 images
+python src/textOCR_to_COCO.py\
+  --json_path dataset/TextOCR/TextOCR_0.1_train.json\
+  --output_path json/TextOCR_train.json
+
+6. data visualization
+python plot/plot_data.py\
+  --coco_json json/TextOCR_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --output_dir vis/TextOCR_val
+
+python plot/plot_data.py\
+  --json json/TextOCR_val_resnet18_multibox.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --output_dir vis/TextOCR_val_resnet18_multibox2\
+  --mode eval\
+  --gt_json json/TextOCR_val.json\
+  --max_imgs 5
+
+
+
+python plot/plot_data.py\
+  --json json/TextOCR_val_FasterRCNN_100.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --output_dir vis/TextOCR_val_Faster-RCNN\
+  --mode eval\
+  --gt_json json/TextOCR_val.json\
+  --max_imgs 5
+
+
+7. box to text
+7.1 test
+python src/box_to_text_recognition.py\
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json\
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --epochs 10\
+  --max_samples 5\
+  --gpu 3
+
+python src/box_to_text_recognition.py\
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json\
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json\
+  --image_root dataset/TextOCR/train_val_images/train_images\
+  --epochs 10\
+  --max_samples 5\
+  --gpu 3
