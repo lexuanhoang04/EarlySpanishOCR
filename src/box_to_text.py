@@ -11,6 +11,9 @@ import os, sys
 import editdistance
 import random
 import torchvision.transforms.functional as TF
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.insert(0, os.getcwd())
 from models import TransformerOCR, CRNN, CRNN_ResNet18
@@ -166,27 +169,16 @@ def evaluate_model(model, test_loader, args):
     print(f"Character Error Rate (CER): {cer:.4f}")
 
 
-def main():
+def main(rank=0, world_size=1, is_ddp=False, args=None):
+
     global BATCH_SIZE, NUM_WORKERS, EPOCHS, IMG_WIDTH, LEARNING_RATE
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--json_train", type=str, required=True)
-    parser.add_argument("--json_val", type=str, required=True)
-    parser.add_argument("--image_root", type=str, required=True)
-    parser.add_argument("--epochs", type=int, default=EPOCHS)
-    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
-    parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
-    parser.add_argument("--max_train_images", type=int, default=None)
-    parser.add_argument("--max_val_images", type=int, default=None)
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/transformer_ocr.pth")
-    parser.add_argument("--print_results", action="store_true")
-    parser.add_argument("--visualize", action="store_true")
-    parser.add_argument("--model", choices=["transformer", "crnn", "crnn_resnet18"], default="crnn")
-    parser.add_argument("--img_width", type=int, default=IMG_WIDTH)
-    parser.add_argument("--train_same_test", action="store_true")
-    parser.add_argument("--log", action="store_true", help="Log shapes of tensors during training")
-    parser.add_argument("--learning_rate", type=float, default=LEARNING_RATE)
-    
-    args = parser.parse_args()
+    # === DDP setup ===
+    if is_ddp:
+        dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        torch.cuda.set_device(rank)
+        device = torch.device(f"cuda:{rank}")
+    else:
+        device = DEVICE
 
     IMG_WIDTH = args.img_width
     BATCH_SIZE = args.batch_size
@@ -209,35 +201,89 @@ def main():
     val_ids = set(val_ids)
 
     train_dataset = TextOCRDataset(args.json_train, args.image_root, allowed_image_ids=train_ids)
-    val_dataset = TextOCRDataset(args.json_val, args.image_root, allowed_image_ids=train_ids if args.train_same_test else val_ids)
+    val_dataset = TextOCRDataset(args.json_val, args.image_root, allowed_image_ids=val_ids)
 
-    if args.visualize:
-        os.makedirs("vis/TransformerOCR", exist_ok=True)
-        for i in range(5):
-            img_tensor, _, _, label = train_dataset[random.randint(0, len(train_dataset)-1)]
-            img_pil = TF.to_pil_image(img_tensor)
-            img_pil.save(f"vis/TransformerOCR/train_sample_{i+1}_{label}.png")
-        print("Saved 5 sample cropped training images.")
+    if args.ddp:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        shuffle = False
+    else:
+        train_sampler = None
+        shuffle = True
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=collate_fn, drop_last=True)
-    test_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=shuffle,
+        sampler=train_sampler,
+        num_workers=NUM_WORKERS,
+        collate_fn=collate_fn,
+        drop_last=True,
+        pin_memory=True,
+        persistent_workers=True
+    )
+
+    test_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        collate_fn=collate_fn
+    )
 
     if args.model == "transformer":
-        model = TransformerOCR(NUM_CLASSES, d_model=2048, nhead=8, num_layers=3).to(DEVICE)
+        model = TransformerOCR(NUM_CLASSES).to(device)
     elif args.model == "crnn":
-        model = CRNN(NUM_CLASSES).to(DEVICE)
+        model = CRNN(NUM_CLASSES).to(device)
     elif args.model == "crnn_resnet18":
-        model = CRNN_ResNet18(NUM_CLASSES).to(DEVICE)
-    #model = TransformerOCR(NUM_CLASSES).to(DEVICE) if args.model == "transformer" else CRNN(NUM_CLASSES).to(DEVICE)
+        model = CRNN_ResNet18(NUM_CLASSES).to(device)
+
+    if args.ddp:
+        model = DDP(model, device_ids=[rank])
+
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CTCLoss(blank=0, zero_infinity=True)
 
-    print("Starting training...")
+    if rank == 0 or not args.ddp:
+        print("Starting training...")
+
     train_model(model, train_loader, criterion, optimizer, EPOCHS, args.checkpoint, args.log)
 
-    print("Starting evaluation...")
-    evaluate_model(model, test_loader, args)
+    if rank == 0 or not args.ddp:
+        print("Starting evaluation...")
+        evaluate_model(model.module if args.ddp else model, test_loader, args)
+
+    if args.ddp:
+        dist.destroy_process_group()
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--json_train", type=str, required=True)
+    parser.add_argument("--json_val", type=str, required=True)
+    parser.add_argument("--image_root", type=str, required=True)
+
+    parser.add_argument("--epochs", type=int, default=EPOCHS)
+    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
+    parser.add_argument("--max_train_images", type=int, default=None)
+    parser.add_argument("--max_val_images", type=int, default=None)
+    parser.add_argument("--learning_rate", type=float, default=LEARNING_RATE)
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/transformer_ocr.pth")
+
+    parser.add_argument("--print_results", action="store_true")
+    parser.add_argument("--visualize", action="store_true")
+    parser.add_argument("--log", action="store_true", help="Log shapes of tensors during training")
+
+    parser.add_argument("--model", choices=["transformer", "crnn", "crnn_resnet18"], default="crnn")
+    parser.add_argument("--img_width", type=int, default=IMG_WIDTH)
+    
+    parser.add_argument("--ddp", action="store_true")
+    parser.add_argument("--gpus", type=int, default=torch.cuda.device_count(), help="Number of GPUs to use for DDP")
+
+    args = parser.parse_args()
+
+    if args.ddp:
+        world_size = min(args.gpus, torch.cuda.device_count())
+        mp.spawn(main, args=(world_size, True, args), nprocs=world_size)
+    else:
+        main(args=args)
