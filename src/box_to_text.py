@@ -13,7 +13,7 @@ import random
 import torchvision.transforms.functional as TF
 
 sys.path.insert(0, os.getcwd())
-from models import TransformerOCR, CRNN
+from models import TransformerOCR, CRNN, CRNN_ResNet18
 
 # -------------------- Global Configuration --------------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,7 +167,7 @@ def evaluate_model(model, test_loader, args):
 
 
 def main():
-    global BATCH_SIZE, NUM_WORKERS, EPOCHS, IMG_WIDTH
+    global BATCH_SIZE, NUM_WORKERS, EPOCHS, IMG_WIDTH, LEARNING_RATE
     parser = argparse.ArgumentParser()
     parser.add_argument("--json_train", type=str, required=True)
     parser.add_argument("--json_val", type=str, required=True)
@@ -180,10 +180,11 @@ def main():
     parser.add_argument("--checkpoint", type=str, default="checkpoints/transformer_ocr.pth")
     parser.add_argument("--print_results", action="store_true")
     parser.add_argument("--visualize", action="store_true")
-    parser.add_argument("--model", choices=["transformer", "crnn"], default="crnn")
+    parser.add_argument("--model", choices=["transformer", "crnn", "crnn_resnet18"], default="crnn")
     parser.add_argument("--img_width", type=int, default=IMG_WIDTH)
     parser.add_argument("--train_same_test", action="store_true")
     parser.add_argument("--log", action="store_true", help="Log shapes of tensors during training")
+    parser.add_argument("--learning_rate", type=float, default=LEARNING_RATE)
     
     args = parser.parse_args()
 
@@ -191,6 +192,7 @@ def main():
     BATCH_SIZE = args.batch_size
     NUM_WORKERS = args.num_workers
     EPOCHS = args.epochs
+    LEARNING_RATE = args.learning_rate
 
     with open(args.json_train) as f:
         train_data = json.load(f)
@@ -220,7 +222,13 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=collate_fn, drop_last=True)
     test_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, collate_fn=collate_fn)
 
-    model = TransformerOCR(NUM_CLASSES).to(DEVICE) if args.model == "transformer" else CRNN(NUM_CLASSES).to(DEVICE)
+    if args.model == "transformer":
+        model = TransformerOCR(NUM_CLASSES, d_model=2048, nhead=8, num_layers=3).to(DEVICE)
+    elif args.model == "crnn":
+        model = CRNN(NUM_CLASSES).to(DEVICE)
+    elif args.model == "crnn_resnet18":
+        model = CRNN_ResNet18(NUM_CLASSES).to(DEVICE)
+    #model = TransformerOCR(NUM_CLASSES).to(DEVICE) if args.model == "transformer" else CRNN(NUM_CLASSES).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CTCLoss(blank=0, zero_infinity=True)
 

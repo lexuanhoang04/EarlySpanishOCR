@@ -7,7 +7,7 @@ from torch import nn
 from torchvision import transforms
 os.sys.path.insert(0, os.getcwd())
 os.environ["CUDA_VISIBLE_DEVICES"] = "3,4,5,6"
-from models import CRNN, TransformerOCR
+from models import CRNN, TransformerOCR, CRNN_ResNet18
 import torch.nn.functional as F
 
 # ---------------- Configuration ----------------
@@ -45,7 +45,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--img_path", type=str, required=True, help="Path to the input image")
     parser.add_argument("--gt_text", type=str, required=True, help="Ground truth text label")
-    parser.add_argument("--model", type=str, choices=["crnn", "transformer"], default="crnn")
+    parser.add_argument("--model", type=str, choices=["crnn", "transformer", "crnn_resnet18"], default="crnn")
     parser.add_argument("--epochs", type=int, default=100)
     args = parser.parse_args()
 
@@ -63,7 +63,8 @@ def main():
         model = CRNN(num_classes=NUM_CLASSES).to(DEVICE)
     elif args.model == "transformer":
         model = TransformerOCR(num_classes=NUM_CLASSES, d_model=2048, nhead=8, num_layers=3).to(DEVICE)
-
+    elif args.model == "crnn_resnet18":
+        model = CRNN_ResNet18(num_classes=NUM_CLASSES).to(DEVICE)
 
     criterion = nn.CTCLoss(blank=0, zero_infinity=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -92,6 +93,9 @@ def main():
         with torch.no_grad():
             decoded = greedy_decoder(log_probs)
         print(f"Epoch {epoch}: Loss={loss.item():.4f}, Pred={decoded[0]}, GT={args.gt_text}")
+        if decoded[0] == args.gt_text:
+            print("Model overfitted!")
+            break
         model.train()
 
 if __name__ == "__main__":
