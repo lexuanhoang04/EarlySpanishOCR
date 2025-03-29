@@ -121,9 +121,11 @@ python src/box_to_text_recognition.py\
   --json_train dataset/TextOCR/TextOCR_0.1_train.json\
   --json_val dataset/TextOCR/TextOCR_0.1_val.json\
   --image_root dataset/TextOCR/train_val_images/train_images\
-  --epochs 10\
-  --max_samples 5\
-  --gpu 3
+  --epochs 20\
+  --max_train_images 500\
+  --max_val_images 100\
+  --print_results\
+  --visualize
 
 python src/box_to_text_recognition.py\
   --json_train dataset/TextOCR/TextOCR_0.1_train.json\
@@ -132,3 +134,50 @@ python src/box_to_text_recognition.py\
   --epochs 10\
   --max_samples 5\
   --gpu 3
+
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 100 \
+  --max_train_images 1 \
+  --max_val_images 1 \
+  --model crnn \
+  --img_width 256 \
+  --print_results \
+  --visualize
+
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 100 \
+  --max_train_images 100 \
+  --max_val_images 100 \
+  --model crnn \
+  --checkpoint checkpoints/crnn_100imgs.pth \
+  --print_results
+
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 1000 \
+  --max_train_images 5 \
+  --max_val_images 5 \
+  --model crnn \
+  --checkpoint checkpoints/crnn_100imgs.pth \
+  --print_results
+
+8. Overfit test
+  python test/overfit_test.py \
+    --img_path vis/TransformerOCR/train_sample_3_GOGH.png\
+    --gt_text GOGH \
+    --model crnn \
+    --epochs 800
+
+  python test/overfit_test.py \
+    --img_path vis/TransformerOCR/train_sample_3_GOGH.png\
+    --gt_text GOGH \
+    --model transformer \
+    --epochs 800
