@@ -114,48 +114,41 @@ def train_model(model, dataloader, optimizer, num_epochs):
             progress_bar.set_postfix(loss=f"{losses.item():.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] Loss: {epoch_loss:.4f}")
 
-def evaluate_model(model, dataloader, coco_gt_path, output_json):
+@torch.no_grad()
+def predict(model, dataloader):
     model.eval()
     all_results = []
-    with torch.no_grad():
-        for images, targets in tqdm(dataloader, desc="Evaluating", unit="batch"):
-            images = [img.to(DEVICE) for img in images]
-            predictions = model(images)  # List of dicts
-            for target, prediction in zip(targets, predictions):
-                # Ensure the target contains an "image_id" (as a tensor)
-                image_id = int(target["image_id"].item())
-                prediction["image_id"] = image_id
-                prediction["boxes"] = prediction["boxes"].cpu()
-                prediction["labels"] = prediction["labels"].cpu()
-                prediction["scores"] = prediction["scores"].cpu()
-                all_results.append(prediction)
+    for images, targets in tqdm(dataloader, desc="Predicting", unit="batch"):
+        images = [img.to(DEVICE) for img in images]
+        predictions = model(images)
+        for target, pred in zip(targets, predictions):
+            image_id = int(target["image_id"].item())
+            pred["image_id"] = image_id
+            pred["boxes"] = pred["boxes"].cpu()
+            pred["labels"] = pred["labels"].cpu()
+            pred["scores"] = pred["scores"].cpu()
+            all_results.append(pred)
+    return all_results
 
-    # Convert the predictions into COCO result format.
+def evaluate(model, dataloader, coco_gt_path, output_json):
+    results = predict(model, dataloader)
+
     coco_results = []
-    for pred in all_results:
+    for pred in results:
         image_id = pred["image_id"]
-        boxes = pred["boxes"]
-        labels = pred["labels"]
-        scores = pred["scores"]
-        for box, label, score in zip(boxes, labels, scores):
+        for box, label, score in zip(pred["boxes"], pred["labels"], pred["scores"]):
             x1, y1, x2, y2 = box.tolist()
-            w = x2 - x1
-            h = y2 - y1
             coco_results.append({
                 "image_id": image_id,
                 "category_id": int(label.item()),
-                "bbox": [x1, y1, w, h],
+                "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "score": float(score.item())
             })
 
-    # Save predictions to a JSON file.
     with open(output_json, "w") as f:
         json.dump(coco_results, f)
     print(f"Saved predictions to {output_json}")
 
-    # Load ground truth and predictions, then run COCO evaluation.
-    from pycocotools.coco import COCO
-    from pycocotools.cocoeval import COCOeval
     coco_gt = COCO(coco_gt_path)
     coco_dt = coco_gt.loadRes(coco_results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")

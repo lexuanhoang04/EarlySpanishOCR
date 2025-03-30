@@ -22,17 +22,17 @@ def visualize_gt(json_path, image_root, output_dir, max_imgs=5):
             x, y, w, h = ann['bbox']
             draw.rectangle([x, y, x + w, y + h], outline='red', width=2)
 
-        image.save(os.path.join(output_dir, f"gt_{i}_{os.path.basename(img_path)}"))
+        out_path = os.path.join(output_dir, f"gt_{i}_{os.path.basename(img_path)}")
+        image.save(out_path)
+        print(f"Saved: {out_path}")
 
 def visualize_eval(pred_json_path, gt_json_path, image_root, output_dir, max_imgs=5):
     os.makedirs(output_dir, exist_ok=True)
-
-    # Load GT for file_name lookup
     coco_gt = COCO(gt_json_path)
 
     with open(pred_json_path, 'r') as f:
         preds = json.load(f)
-        print(f'loaded {pred_json_path}')
+        print(f'Loaded predictions from {pred_json_path}')
 
     pred_dict = defaultdict(list)
     for ann in preds:
@@ -40,9 +40,7 @@ def visualize_eval(pred_json_path, gt_json_path, image_root, output_dir, max_img
 
     for i, (img_id, anns) in enumerate(list(pred_dict.items())[:max_imgs]):
         img_info = coco_gt.loadImgs(img_id)[0]
-        file_name = img_info['file_name'].split('/')[-1]
-
-        img_path = os.path.join(image_root, os.path.basename(file_name))
+        img_path = os.path.join(image_root, os.path.basename(img_info['file_name']))
         if not os.path.exists(img_path):
             continue
 
@@ -52,24 +50,25 @@ def visualize_eval(pred_json_path, gt_json_path, image_root, output_dir, max_img
             x, y, w, h = ann['bbox']
             draw.rectangle([x, y, x + w, y + h], outline='blue', width=2)
 
-        image.save(os.path.join(output_dir, f"eval_{i}_{os.path.basename(img_path)}"))
+        out_path = os.path.join(output_dir, f"eval_{i}_{os.path.basename(img_path)}")
+        image.save(out_path)
+        print(f"Saved: {out_path}")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--json", required=True, help="Path to COCO JSON (GT or prediction)")
+    parser.add_argument("--json", required=True, help="Path to JSON file")
     parser.add_argument("--gt_json", help="(Only for eval mode) Path to GT COCO JSON")
     parser.add_argument("--image_root", required=True, help="Root directory of images")
     parser.add_argument("--output_dir", required=True, help="Directory to save visualized outputs")
-    parser.add_argument("--mode", choices=["gt", "eval"], required=True, help="Type of JSON format")
+    parser.add_argument("--mode", choices=["gt", "eval", "gt_crop"], required=True, help="Visualization mode")
     parser.add_argument("--max_imgs", type=int, default=5)
     args = parser.parse_args()
 
     if args.mode == "gt":
         visualize_gt(args.json, args.image_root, args.output_dir, args.max_imgs)
-    else:
+    elif args.mode == "eval":
         if not args.gt_json:
             raise ValueError("In eval mode, --gt_json must be provided to get file names.")
         visualize_eval(args.json, args.gt_json, args.image_root, args.output_dir, args.max_imgs)
-
 if __name__ == "__main__":
     main()
