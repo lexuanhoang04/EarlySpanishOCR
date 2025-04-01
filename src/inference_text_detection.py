@@ -40,9 +40,10 @@ if __name__ == '__main__':
     parser.add_argument('--image_path', type=str, required=True)
     parser.add_argument('--checkpoint', type=str, required=True)
     parser.add_argument('--output_image', type=str, default='inference_viz.jpg')
+    parser.add_argument('--num_classes', type=int, default=2, help="Number of classes for the detector")
     args = parser.parse_args()
 
-    model = get_text_detector(num_classes=2)
+    model = get_text_detector(num_classes=args.num_classes)
     model.load_state_dict(torch.load(args.checkpoint, map_location=DEVICE))
     model.to(DEVICE)
 

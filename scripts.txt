@@ -76,6 +76,93 @@ python src/text_detection_FasterRCNN.py\
   --epochs 1\
   --output_json json/TextOCR_val_FasterRCNN_100.json
 
+4.2.3 100 images FUNSD
+python src/text_detection_FasterRCNN.py\
+  --json_train json/FUNSD/FUNSD_train_100.json\
+  --json_val json/FUNSD/FUNSD_test.json\
+  --image_root dataset/FUNSD\
+  --epochs 1\
+  --checkpoint checkpoints/faster_rcnn_text_detector.pth\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_FUNSD_100.pth\
+  --output_json json/TextOCR_val_FasterRCNN_100.json
+
+4.2.4 FUNSD full
+
+python src/text_detection_FasterRCNN.py\
+  --json_train json/FUNSD/FUNSD_train.json\
+  --json_val json/FUNSD/FUNSD_test.json\
+  --image_root dataset/FUNSD\
+  --epochs 100\
+  --checkpoint checkpoints/faster_rcnn_text_detector.pth\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_FUNSD.pth\
+  --output_json json/TextOCR_val_FasterRCNN.json
+
+4.2.5 100 images cBAD
+
+python src/text_detection_FasterRCNN.py\
+  --json_train json/cBAD/cbad_train_100.json\
+  --json_val json/cBAD/cbad_val_100.json\
+  --image_root dataset/cBAD\
+  --epochs 1\
+  --checkpoint checkpoints/faster_rcnn_text_detector_FUNSD.pth\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_cBAD_100.pth\
+  --output_json json/TextOCR_val_FasterRCNN_cBAD_100.json
+
+4.2.6 cBAD full
+
+python src/text_detection_FasterRCNN.py\
+  --json_train json/cBAD/cbad_train.json\
+  --json_val json/cBAD/cbad_val.json\
+  --image_root dataset/cBAD\
+  --epochs 30\
+  --checkpoint checkpoints/faster_rcnn_text_detector_FUNSD.pth\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_cBAD.pth\
+  --output_json json/TextOCR_val_FasterRCNN_cBAD.json
+
+4.2.7 DocBank 100 images
+python src/text_detection_FasterRCNN.py\
+  --json_train json/DocBank/DocBank_train_100.json\
+  --json_val json/DocBank/DocBank_test_200.json\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --epochs 35\
+  --num_classes 3\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_DocBank_100.pth\
+  --output_json json/TextOCR_val_FasterRCNN_DocBank_100.json
+
+4.2.8 DocBank 1000
+python src/text_detection_FasterRCNN.py\
+  --json_train json/DocBank/DocBank_train_1000.json\
+  --json_val json/DocBank/DocBank_test_200.json\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --epochs 15\
+  --num_classes 3\
+  --batch_size 2\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_DocBank_1000.pth\
+  --output_json json/TextOCR_val_FasterRCNN_DocBank_1000.json\
+  --visualize
+
+4.2.9 DocBank 4000
+python src/text_detection_FasterRCNN.py\
+  --json_train json/DocBank/DocBank_train_4000.json\
+  --json_val json/DocBank/DocBank_test_200.json\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --epochs 15\
+  --num_classes 3\
+  --batch_size 2\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_DocBank_4000.pth\
+  --output_json json/TextOCR_val_FasterRCNN_DocBank_4000.json
+
+4.2.10 DocBank 500
+python src/text_detection_FasterRCNN.py\
+  --json_train json/DocBank/DocBank_train_500.json\
+  --json_val json/DocBank/DocBank_test_200.json\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --epochs 15\
+  --num_classes 3\
+  --batch_size 1\
+  --checkpoint_trained checkpoints/faster_rcnn_text_detector_DocBank_500.pth\
+  --output_json json/TextOCR_val_FasterRCNN_DocBank_500.json
+
 5. data conversion
   5.1 full
 
@@ -90,11 +177,112 @@ python src/textOCR_to_COCO.py\
   --json_path dataset/TextOCR/TextOCR_0.1_train.json\
   --output_path json/TextOCR_train.json
 
+5.3 FUNSD to coco
+python src/dataset/FUNSD_to_COCO.py\
+  --funsd_dir dataset/FUNSD/training_data\
+  --output_json json/FUNSD/FUNSD_train.json
+
+python src/dataset/FUNSD_to_COCO.py\
+  --funsd_dir dataset/FUNSD/training_data\
+  --output_json json/FUNSD/FUNSD_train_100.json\
+  --max_images 100
+
+python src/dataset/FUNSD_to_COCO.py\
+  --funsd_dir dataset/FUNSD/testing_data\
+  --output_json json/FUNSD/FUNSD_test.json\
+  --max_images 100
+
+5.4 cBAD to coco
+python src/dataset/cBAD_to_COCO.py \
+  --input_dir dataset/cBAD/train\
+  --output json/cBAD/cbad_train_100.json\
+  --limit 100
+
+python src/dataset/cBAD_to_COCO.py \
+  --input_dir dataset/cBAD/eval\
+  --output json/cBAD/cbad_val_100.json\
+  --limit 100
+
+python src/dataset/cBAD_to_COCO.py \
+  --input_dir dataset/cBAD/train\
+  --output json/cBAD/cbad_train.json
+
+python src/dataset/cBAD_to_COCO.py \
+  --input_dir dataset/cBAD/eval\
+  --output json/cBAD/cbad_val.json
+
+5.5 DocBank to coco
+python src/dataset/DocBank_to_COCO.py\
+  --src dataset/DocBank/DocBank_500K_txt\
+  --dest json/DocBank_image\
+  --max_images 100
+
+python src/dataset/dockbank_coco_to_coco.py \
+  --input_json dataset/DocBank/500K_train.json\
+  --output_json json/DocBank/DocBank_train_100.json \
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --max_images 100
+
+python src/dataset/DocBank_to_COCO_word.py\
+  --src_dir dataset/DocBank/DocBank_500K_txt\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --split_json dataset/DocBank/500K_train.json\
+  --output_json json/DocBank/DocBank_train_100.json\
+  --max_images 100
+
+python src/dataset/DocBank_to_COCO_word.py\
+  --src_dir dataset/DocBank/DocBank_500K_txt\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --split_json dataset/DocBank/500K_train.json\
+  --output_json json/DocBank/DocBank_train_500.json\
+  --max_images 500
+
+python src/dataset/DocBank_to_COCO_word.py\
+  --src_dir dataset/DocBank/DocBank_500K_txt\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --split_json dataset/DocBank/500K_test.json\
+  --output_json json/DocBank/DocBank_test_200.json\
+  --max_images 200
+
+python src/dataset/DocBank_to_COCO_word.py\
+  --src_dir dataset/DocBank/DocBank_500K_txt\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --split_json dataset/DocBank/500K_train.json\
+  --output_json json/DocBank/DocBank_train_4000.json\
+  --max_images 4000
+
 6. data visualization
 python plot/plot_data.py\
   --coco_json json/TextOCR_val.json\
   --image_root dataset/TextOCR/train_val_images/train_images\
   --output_dir vis/TextOCR_val
+
+python plot/plot_data_COCO.py\
+  --json json/FUNSD/FUNSD_train_100.json\
+  --image_root dataset/FUNSD/training_data/images\
+  --mode gt\
+  --output_dir vis/FUNSD_train_100
+
+python plot/plot_data_COCO.py\
+  --json json/cBAD/cbad_train_100.json\
+  --image_root dataset/cBAD/train\
+  --mode gt\
+  --output_dir vis/cBAD_train_100
+
+python plot/plot_data_COCO.py\
+  --json json/DocBank/DocBank_train_100.json\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --mode gt\
+  --output_dir vis/DocBank_train_100\
+  --only_text
+
+python plot/plot_data_COCO.py\
+  --json json/DocBank_image/5.tar_1801.02131.gz_paper_5.json\
+  --image_root dataset/DocBank/DocBank_500K_ori_img\
+  --mode gt\
+  --output_dir vis/DocBank_individual
+
+
 
 python plot/plot_data.py\
   --json json/TextOCR_val_resnet18_multibox.json\
@@ -114,6 +302,18 @@ python plot/plot_data.py\
   --gt_json json/TextOCR_val.json\
   --max_imgs 5
 
+python plot/plot_data_TextOCR.py \
+  --json dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --output_dir vis/textocr_crops \
+  --max_imgs 10
+
+python plot/plot_data_TextOCR.py \
+  --json dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --output_dir vis/textocr_crops \
+  --max_imgs 10\
+  --image_name a7ad2bcb93d48576.jpg
 
 7. box to text
 7.1 test
@@ -127,6 +327,7 @@ python src/box_to_text_recognition.py\
   --print_results\
   --visualize
 
+7.2
 python src/box_to_text_recognition.py\
   --json_train dataset/TextOCR/TextOCR_0.1_train.json\
   --json_val dataset/TextOCR/TextOCR_0.1_val.json\
@@ -135,6 +336,7 @@ python src/box_to_text_recognition.py\
   --max_samples 5\
   --gpu 3
 
+7.3
 python src/box_to_text.py \
   --json_train dataset/TextOCR/TextOCR_0.1_train.json \
   --json_val dataset/TextOCR/TextOCR_0.1_val.json \
@@ -147,6 +349,7 @@ python src/box_to_text.py \
   --print_results \
   --visualize
 
+7.4
 python src/box_to_text.py \
   --json_train dataset/TextOCR/TextOCR_0.1_train.json \
   --json_val dataset/TextOCR/TextOCR_0.1_val.json \
@@ -158,16 +361,75 @@ python src/box_to_text.py \
   --checkpoint checkpoints/crnn_100imgs.pth \
   --print_results
 
+7.5
 python src/box_to_text.py \
   --json_train dataset/TextOCR/TextOCR_0.1_train.json \
   --json_val dataset/TextOCR/TextOCR_0.1_val.json \
   --image_root dataset/TextOCR/train_val_images/train_images \
-  --epochs 1000 \
-  --max_train_images 5 \
-  --max_val_images 5 \
+  --epochs 300 \
+  --max_train_images 100 \
+  --max_val_images 100 \
   --model crnn \
   --checkpoint checkpoints/crnn_100imgs.pth \
   --print_results
+
+7.6
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 500 \
+  --max_train_images 2 \
+  --max_val_images 2 \
+  --model transformer \
+  --checkpoint checkpoints/transformer2.pth \
+  --learning_rate 0.0001 \
+  --print_results\
+  --log
+
+7.7 Test DDP 
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 10 \
+  --max_train_images 100 \
+  --max_val_images 100 \
+  --model crnn_resnet18 \
+  --checkpoint checkpoints/crnn_resnet18_100.pth \
+  --learning_rate 0.001\
+  --print_results\
+  --ddp
+
+7.8 DDP full
+MASTER_ADDR=127.0.0.1 MASTER_PORT=29500 \
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 50 \
+  --model crnn_resnet18 \
+  --checkpoint checkpoints/crnn_resnet18_full.pth \
+  --learning_rate 0.001\
+  --print_results\
+  --ddp\
+  --gpus 7\
+  --log
+
+MASTER_ADDR=127.0.0.1 MASTER_PORT=29501 \
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --epochs 50 \
+  --model transformer \
+  --checkpoint checkpoints/transformer_full.pth \
+  --learning_rate 0.0001\
+  --print_results\
+  --ddp\
+  --gpus 7
+
+pkill -f "multiprocessing.spawn"
 
 8. Overfit test
   python test/overfit_test.py \
@@ -181,3 +443,40 @@ python src/box_to_text.py \
     --gt_text GOGH \
     --model transformer \
     --epochs 800
+
+  python test/overfit_test.py \
+    --img_path vis/TransformerOCR/train_sample_3_GOGH.png\
+    --gt_text GOGH \
+    --model crnn_resnet18 \
+    --epochs 800
+
+9. inference box to text
+9.1 crnn_resnet18
+python src/inference_model_box2text.py\
+  --image_path dataset/test_each_doc/testMendo.jpg
+
+10. evaluate only
+python src/box_to_text.py \
+  --json_train dataset/TextOCR/TextOCR_0.1_train.json \
+  --json_val dataset/TextOCR/TextOCR_0.1_val.json \
+  --image_root dataset/TextOCR/train_val_images/train_images \
+  --max_train_images 2 \
+  --max_val_images 2 \
+  --model crnn_resnet18 \
+  --checkpoint checkpoints/crnn_resnet18_full.pth\
+  --print_results\
+  --eval_only\
+  --vis_path vis/CRNN_ResNet18_eval
+
+11. inference text detection
+python src/inference_text_detection.py\
+  --image_path dataset/test_porcones_preprocessed/Porcones_page_1.jpg\
+  --checkpoint checkpoints/faster_rcnn_text_detector_FUNSD.pth\
+  --output_image vis/TextDetection/text2_TextOCR+FUNSD.png
+
+python src/inference_text_detection.py\
+  --image_path dataset/misc/test3.jpg\
+  --checkpoint checkpoints/faster_rcnn_text_detector_DocBank_100.pth\
+  --num_classes 3\
+  --output_image vis/TextDetection/text4_TextOCR+FUNSD+cBAD.png
+

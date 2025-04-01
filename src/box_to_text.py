@@ -151,16 +151,23 @@ def evaluate_model(model, test_loader, args):
     total_edits, total_chars = 0, 0
     all_preds, all_gt = [], []
 
+    os.makedirs(args.vis_path, exist_ok=True)
+    
     with torch.no_grad():
         for images, labels_concat, label_lengths, texts in tqdm(test_loader, desc="Evaluating", unit="batch"):
             images = images.to(DEVICE)
             logits = model(images)
-            preds = greedy_decoder(logits)
+            preds = greedy_decoder(logits.permute(1, 0, 2)) # [T, B, C] -> [B, T, C]
+
             all_preds.extend(preds)
             all_gt.extend(texts)
             for pred, gt in zip(preds, texts):
                 total_edits += editdistance.eval(pred, gt)
                 total_chars += len(gt)
+            for i in range(min(len(images), 3)):
+                TF.to_pil_image(images[i].cpu()).save(f"{args.vis_path}/debug_eval_{i}_{texts[i]}.png")
+                print(f"Saved: debug_eval_{i}_{texts[i]}.png")
+            # in evaluate_model() or your test loop
 
     cer = total_edits / total_chars if total_chars > 0 else float('inf')
     if args.print_results:
@@ -243,11 +250,22 @@ def main(rank=0, world_size=1, is_ddp=False, args=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CTCLoss(blank=0, zero_infinity=True)
 
-    if rank == 0 or not args.ddp:
-        print("Starting training...")
+    # === Load checkpoint (always before evaluation) ===
+    if args.eval_only or os.path.exists(args.checkpoint):
+        if rank == 0 or not args.ddp:
+            print(f"Loading model weights from {args.checkpoint}")
+        state_dict = torch.load(args.checkpoint, map_location=device)
+        if any(k.startswith("module.") for k in state_dict):
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
 
-    train_model(model, train_loader, criterion, optimizer, EPOCHS, args.checkpoint, args.log)
+    # === Train ===
+    if not args.eval_only:
+        if rank == 0 or not args.ddp:
+            print("Starting training...")
+        train_model(model, train_loader, criterion, optimizer, EPOCHS, args.checkpoint, args.log)
 
+    # === Evaluate ===
     if rank == 0 or not args.ddp:
         print("Starting evaluation...")
         evaluate_model(model.module if args.ddp else model, test_loader, args)
@@ -279,6 +297,9 @@ if __name__ == "__main__":
     
     parser.add_argument("--ddp", action="store_true")
     parser.add_argument("--gpus", type=int, default=torch.cuda.device_count(), help="Number of GPUs to use for DDP")
+
+    parser.add_argument("--eval_only", action="store_true", help="Only run evaluation from checkpoint")
+    parser.add_argument("--vis_path", type=str, default="visualization", help="Path to save visualizations")
 
     args = parser.parse_args()
 

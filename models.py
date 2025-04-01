@@ -3,6 +3,7 @@
 import torch
 from torch import nn
 from torchvision import models
+import math
 
 class TransformerOCR(nn.Module):
     def __init__(self, num_classes, d_model=512, nhead=8, num_layers=3):
@@ -32,23 +33,23 @@ class TransformerOCR(nn.Module):
         # Output layer for class prediction
         self.fc = nn.Linear(d_model, num_classes)
 
+        self.pos_encoder = PositionalEncoding(d_model)
+
     def forward(self, x):
-        # CNN Feature Extraction
         features = self.cnn(x)                     # (B, 2048, H, W)
         pooled = self.adaptive_pool(features)     # (B, 2048, 1, W)
         squeezed = pooled.squeeze(2)              # (B, 2048, W)
         squeezed = squeezed.permute(0, 2, 1)      # (B, W, 2048)
 
         projected = self.channel_projector(squeezed)  # (B, W, d_model)
-        seq = projected.permute(1, 0, 2)              # (W, B, d_model)
+        seq = projected.permute(1, 0, 2)              # (T, B, d_model)
 
-        # Transformer Encoding
-        encoded = self.transformer_encoder(seq)       # (W, B, d_model)
-        encoded = encoded.permute(1, 0, 2)            # (B, W, d_model)
+        seq = self.pos_encoder(seq)                  # Add positional info
+        encoded = self.transformer_encoder(seq)      # (T, B, d_model)
+        encoded = encoded.permute(1, 0, 2)           # (B, T, d_model)
 
-        # Final classification
-        logits = self.fc(encoded)                     # (B, W, num_classes)
-        return logits.log_softmax(2).permute(1, 0, 2) # (T, B, C)
+        logits = self.fc(encoded)                    # (B, T, num_classes)
+        return logits.log_softmax(2).permute(1, 0, 2)  # (T, B, C)
 
 
 class CRNN(nn.Module):
@@ -128,4 +129,4 @@ class PositionalEncoding(nn.Module):
         x: (T, B, d_model)
         returns: (T, B, d_model) with position added
         """
-        return x + self.pe[:x.size(0)]
+        return x + 0.1 * self.pe[:x.size(0)]

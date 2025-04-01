@@ -9,7 +9,11 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 import torchvision
 from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 from tqdm import tqdm
+from torch.cuda.amp import autocast, GradScaler
+from torchvision.transforms import functional as TF
+from PIL import ImageDraw
 
 # -------------------- Global Variables --------------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -39,45 +43,54 @@ class TextDetectionDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         img_id = self.image_ids[idx]
         img_info = self.coco.loadImgs(img_id)[0]
-        img_path = os.path.join(self.image_root, img_info['file_name'].split('/')[-1])
-        image = Image.open(img_path).convert("RGB")
+        img_path = os.path.join(self.image_root, img_info['file_name'].split('/')[-1]) \
+            if 'TextOCR' in img_info['file_name'] else os.path.join(self.image_root, img_info['file_name'])
         
+        image = Image.open(img_path).convert("RGB")
+        orig_w, orig_h = image.size
+
+        # Resize while keeping aspect ratio
+        max_size = 1000
+        scale = min(max_size / orig_w, max_size / orig_h)
+        new_w = int(orig_w * scale)
+        new_h = int(orig_h * scale)
+        image = image.resize((new_w, new_h), resample=Image.BILINEAR)
+
+        # Apply resizing to bounding boxes
         ann_ids = self.coco.getAnnIds(imgIds=img_id)
         anns = self.coco.loadAnns(ann_ids)
-        
-        boxes = []
-        labels = []
-        areas = []
-        iscrowd = []
+
+        boxes, labels, areas, iscrowd = [], [], [], []
         for ann in anns:
-            # COCO format: bbox = [x, y, w, h]
-            bbox = ann["bbox"]
-            x, y, w, h = bbox
+            x, y, w, h = ann['bbox']
             if w <= 0 or h <= 0:
-                continue  # Skip invalid boxes
-            # Convert to [x1, y1, x2, y2]
+                continue
             x2 = x + w
             y2 = y + h
-            boxes.append([x, y, x2, y2])
-            labels.append(1)  # 1 for text
-            areas.append(ann.get("area", w * h))
+            # Scale box
+            boxes.append([x * scale, y * scale, x2 * scale, y2 * scale])
+            labels.append(1)
+            areas.append(ann.get("area", w * h) * scale * scale)
             iscrowd.append(ann.get("iscrowd", 0))
-        
-        boxes = torch.as_tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4), dtype=torch.float32)
-        labels = torch.as_tensor(labels, dtype=torch.int64) if labels else torch.zeros((0,), dtype=torch.int64)
-        areas = torch.as_tensor(areas, dtype=torch.float32) if areas else torch.zeros((0,), dtype=torch.float32)
-        iscrowd = torch.as_tensor(iscrowd, dtype=torch.int64) if iscrowd else torch.zeros((0,), dtype=torch.int64)
-        
-        target = {}
-        target["boxes"] = boxes
-        target["labels"] = labels
-        target["image_id"] = torch.tensor([img_id])
-        target["area"] = areas
-        target["iscrowd"] = iscrowd
-        
+
+        boxes = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4), dtype=torch.float32)
+        labels = torch.tensor(labels, dtype=torch.int64)
+        areas = torch.tensor(areas, dtype=torch.float32)
+        iscrowd = torch.tensor(iscrowd, dtype=torch.int64)
+
+        target = {
+            "boxes": boxes,
+            "labels": labels,
+            "image_id": torch.tensor([img_id]),
+            "area": areas,
+            "iscrowd": iscrowd
+        }
+
         if self.transforms:
             image = self.transforms(image)
+
         return image, target
+
 
 # Collate function for detection: returns a tuple of lists.
 def collate_fn(batch):
@@ -90,30 +103,40 @@ def get_text_detector(num_classes):
     # Replace the head (box predictor) with one for our number of classes.
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = torchvision.models.detection.faster_rcnn.FastRCNNPredictor(in_features, num_classes)
+    # Reduce number of region proposals (default is 2000 for train, 1000 for test)
+    model.roi_heads.detections_per_img = 250  # Reduce final detections (default 100)
+
     return model
 
 # -------------------- Training Loop --------------------
 def train_model(model, dataloader, optimizer, num_epochs):
     model.train()
+    scaler = GradScaler()  # For automatic mixed precision
+
     for epoch in range(num_epochs):
         epoch_loss = 0.0
         progress_bar = tqdm(dataloader, desc=f"Epoch [{epoch+1}/{num_epochs}]", unit="batch")
+
         for images, targets in progress_bar:
-            # images: list of image tensors; targets: list of dicts
             images = [img.to(DEVICE) for img in images]
             targets = [{k: v.to(DEVICE) for k, v in t.items()} for t in targets]
 
-            loss_dict = model(images, targets)
-            losses = sum(loss for loss in loss_dict.values())
-
             optimizer.zero_grad()
-            losses.backward()
-            optimizer.step()
+
+            with autocast():  # AMP enabled
+                loss_dict = model(images, targets)
+                losses = sum(loss for loss in loss_dict.values())
+
+            scaler.scale(losses).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             epoch_loss += losses.item()
             progress_bar.set_postfix(loss=f"{losses.item():.4f}")
-        print(f"Epoch [{epoch+1}/{num_epochs}] Loss: {epoch_loss:.4f}")
 
+        avg_loss = epoch_loss / len(dataloader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] Loss: {avg_loss:.4f}")
+        torch.cuda.empty_cache()
 @torch.no_grad()
 def predict(model, dataloader):
     model.eval()
@@ -156,23 +179,71 @@ def evaluate(model, dataloader, coco_gt_path, output_json):
     coco_eval.accumulate()
     coco_eval.summarize()
 
+def freeze_backbone_but_not_rpn_or_heads(model):
+    # Freeze everything first
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze RPN
+    for param in model.rpn.parameters():
+        param.requires_grad = True
+
+    # Unfreeze ROI heads
+    for param in model.roi_heads.parameters():
+        param.requires_grad = True
+
+    # Optionally unfreeze just the last few layers of the backbone
+    for name, param in model.backbone.body.named_parameters():
+        if name.startswith('layer3') or name.startswith('layer4'):
+            param.requires_grad = True
+
+    # Print how many layers are trainable
+    num_trainable = sum(p.requires_grad for p in model.parameters())
+    print(f"Number of trainable parameters: {num_trainable}")
+
+def visualize_one_resized_example(dataset, output_path="vis/resized_example_with_boxes.jpg"):
+    image, target = dataset[0]
+    boxes = target["boxes"]
+
+    # Convert tensor to numpy for plotting
+    image_np = TF.to_pil_image(image)
+
+    # Draw boxes
+    draw = ImageDraw.Draw(image_np)
+    for box in boxes:
+        x1, y1, x2, y2 = box.tolist()
+        draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+
+    image_np.save(output_path)
+    print(f"Saved resized visualization to {output_path}")
 
 # -------------------- Main --------------------
 def main():
+    global BATCH_SIZE
     parser = argparse.ArgumentParser()
     parser.add_argument('--json_train', type=str, required=True, help="Path to COCO JSON for training")
     parser.add_argument('--json_val', type=str, required=True, help="Path to COCO JSON for validation")
     parser.add_argument('--image_root', type=str, required=True, help="Path to the directory containing images")
     parser.add_argument('--epochs', type=int, default=10, help="Number of training epochs")
     parser.add_argument('--output_json', type=str, default="predictions.json", help="Path to save predictions")
-    parser.add_argument('--checkpoint', type=str, default='checkpoints/faster_RCNN.pth', help="Path to model checkpoint")
+    parser.add_argument('--checkpoint', type=str, default=None, help="Path to model checkpoint")
+    parser.add_argument('--checkpoint_trained', type=str, default='checkpoints/faster_RCNN_trained.pth', help="Path to model checkpoint for training")
+    parser.add_argument('--num_classes', type=int, default=2, help="Number of classes (including background)")
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size for training")
+    parser.add_argument('--visualize', action='store_true', help="Plot image and boxes after resizing")
 
     args = parser.parse_args()
+    
+    BATCH_SIZE = args.batch_size
     
     # Create datasets
     train_dataset = TextDetectionDataset(args.json_train, args.image_root)
     val_dataset = TextDetectionDataset(args.json_val, args.image_root)
     
+    if args.visualize:
+        visualize_one_resized_example(train_dataset)
+        return
+
     # Create data loaders with collate function and tqdm
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
                               num_workers=NUM_WORKERS, collate_fn=collate_fn)
@@ -180,22 +251,28 @@ def main():
                             num_workers=NUM_WORKERS, collate_fn=collate_fn)
     
     # For text detection, we use 2 classes: background and text.
-    num_classes = 2
+    num_classes = args.num_classes
+
     model = get_text_detector(num_classes)
+    freeze_backbone_but_not_rpn_or_heads(model)
+    if args.checkpoint:
+        # Load the model from a checkpoint
+        print(f"Loading model from {args.checkpoint}")
+        model.load_state_dict(torch.load(args.checkpoint, map_location=DEVICE))
     model.to(DEVICE)
-    
-    optimizer = optim.Adam(model.parameters(), lr=LR)
+
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LR)
     
     # Train the detector with tqdm progress bars.
     train_model(model, train_loader, optimizer, args.epochs)
     
     # Evaluate (display one batch of predictions)
-    evaluate_model(model, val_loader, args.json_val, args.output_json)
+    evaluate(model, val_loader, args.json_val, args.output_json)
 
     
     # Optionally, save the model.
-    torch.save(model.state_dict(), args.checkpoint)
-    print(f"Model saved to {args.checkpoint}")
+    torch.save(model.state_dict(), args.checkpoint_trained)
+    print(f"Model saved to {args.checkpoint_trained}")
 
 if __name__ == '__main__':
     main()
