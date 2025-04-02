@@ -1,99 +1,116 @@
 import argparse
+import yaml
 import sys, os
-
 from PIL import Image
 import torch
 from torch import nn
 from torchvision import transforms
+
+# Adjust sys path
 os.sys.path.insert(0, os.getcwd())
-os.environ["CUDA_VISIBLE_DEVICES"] = "3,4,5,6"
-from models import CRNN, TransformerOCR, CRNN_ResNet18
+from models import CRNN, TransformerOCR, CRNN_ResNet18_Line, TransformerOCR_Line
 import torch.nn.functional as F
+from src.utils import greedy_decoder, setup_chars
 
-# ---------------- Configuration ----------------
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-IMG_HEIGHT = 32
-IMG_WIDTH = 128
-CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-CHAR2IDX = {c: i + 1 for i, c in enumerate(CHARS)}
-CHAR2IDX[""] = 0  # CTC blank
-IDX2CHAR = {i: c for c, i in CHAR2IDX.items()}
-NUM_CLASSES = len(CHAR2IDX)
-
-transform = transforms.Compose([
-    transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
-    transforms.ToTensor(),
-])
-
-# ---------------- Greedy Decoder ----------------
-def greedy_decoder(preds):
-    preds = preds.argmax(2)  # (T, B)
-    decoded_texts = []
-    for seq in preds.permute(1, 0):  # (B, T)
-        prev = 0
-        s = ""
-        for p in seq:
-            p = p.item()
-            if p != prev and p != 0:
-                s += IDX2CHAR.get(p, "")
-            prev = p
-        decoded_texts.append(s)
-    return decoded_texts
-
-# ---------------- Main Test Script ----------------
+# ---------------- Main Script ----------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--img_path", type=str, required=True, help="Path to the input image")
-    parser.add_argument("--gt_text", type=str, required=True, help="Ground truth text label")
-    parser.add_argument("--model", type=str, choices=["crnn", "transformer", "crnn_resnet18"], default="crnn")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--img_path", type=str, required=True)
+    parser.add_argument("--gt_text_path", type=str, required=True)
+    parser.add_argument("--break_on_success", action="store_true")
     args = parser.parse_args()
 
-    label_indices = [CHAR2IDX[c] for c in args.gt_text]
-    label = torch.LongTensor(label_indices)
+    # Load config
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f)
 
-    target_len = torch.tensor([len(label)], dtype=torch.long)
+    # Load label
+    with open(args.gt_text_path, "r") as f:
+        gt_text = f.read().strip()
 
+    # # Vocab
+    # chars = cfg["chars"]
+    # char2idx = {c: i + 1 for i, c in enumerate(chars)}  # shift by 1
+    # char2idx[""] = 0  # CTC blank
+    # idx2char = {i: c for c, i in char2idx.items()}
+    # num_classes = len(char2idx) + 1 # ✅ includes blank
+
+    chars, char2idx, idx2char, num_classes = setup_chars(cfg)
+
+    print(f"Char list length: {len(chars)}")
+    print(f"Vocab size (num_classes): {num_classes}")
+    print(f"Space index: {char2idx.get(' ', '❌ not found')}")
+
+    # Image transform
+    transform = transforms.Compose([
+        transforms.Resize((cfg.get("img_height", 32), cfg.get("img_width", 512))),
+        transforms.ToTensor(),
+    ])
+
+    # Load image and label
     image = Image.open(args.img_path).convert("RGB")
-    image_tensor = transform(image).unsqueeze(0).to(DEVICE)
-    print("Image tensor shape:", image_tensor.shape)
-    label = label.to(DEVICE)
+    image_tensor = transform(image).unsqueeze(0)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    image_tensor = image_tensor.to(device)
 
-    if args.model == "crnn":
-        model = CRNN(num_classes=NUM_CLASSES).to(DEVICE)
-    elif args.model == "transformer":
-        model = TransformerOCR(num_classes=NUM_CLASSES, d_model=2048, nhead=8, num_layers=3).to(DEVICE)
-    elif args.model == "crnn_resnet18":
-        model = CRNN_ResNet18(num_classes=NUM_CLASSES).to(DEVICE)
+    label_indices = [char2idx.get(c, 0) for c in gt_text]
+    label = torch.LongTensor(label_indices).to(device)
+    target_len = torch.tensor([len(label)], dtype=torch.long).to(device)
 
-    criterion = nn.CTCLoss(blank=0, zero_infinity=True)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # Model selection
+    model_type = cfg["model"]
+    if model_type == "crnn":
+        model = CRNN(num_classes=num_classes).to(device)
+    elif model_type == "transformer":
+        model = TransformerOCR(num_classes=num_classes).to(device)
+    elif model_type == "crnn_resnet18_line":
+        model = CRNN_ResNet18_Line(num_classes=num_classes).to(device)
+    elif model_type == "transformer_line":
+        model = TransformerOCR_Line(num_classes=num_classes).to(device)
+    elif model_type == "transformer_attention":
+        model = TransformerOCR_Attention(num_classes=num_classes).to(device)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
 
-    print("start training")
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.get("learning_rate", 1e-4))
+
+    # CTC loss for all models except attention-based
+    use_attention = "attention" in model_type
+    criterion = nn.CrossEntropyLoss(ignore_index=0) if use_attention else nn.CTCLoss(blank=0, zero_infinity=True)
+
+    print("Start training")
     model.train()
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, cfg.get("epochs", 1000) + 1):
         optimizer.zero_grad()
-        logits = model(image_tensor)  # (B=1, T, C)
-        log_probs = logits
 
-        batch_size = image_tensor.size(0)
-        input_len = torch.full(size=(batch_size,), fill_value=log_probs.size(0), dtype=torch.long, device=DEVICE)
-        target_len = torch.full(size=(batch_size,), fill_value=label.size(0), dtype=torch.long, device=DEVICE)
-    
-        # print("log_probs.shape:", log_probs.shape)  # should be (T=32, B=1, C)
-        # print("label.shape:", label.shape)          # should be (4,)
-        # print("input_len:", input_len)              # should be tensor([32])
-        # print("target_len:", target_len)            # should be tensor([4])
+        if use_attention:
+            sos_token = char2idx["<sos>"]
+            tgt_input = torch.tensor([[sos_token] + label_indices[:-1]], dtype=torch.long).to(device).transpose(0, 1)
+            tgt_output = torch.tensor(label_indices, dtype=torch.long).unsqueeze(1).to(device)
+            output = model(image_tensor, tgt_input)
+            loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
+            pred_ids = model.greedy_decode(image_tensor)
+            pred_text = "".join([idx2char[i] for i in pred_ids])
+        else:
+            logits = model(image_tensor)
+            log_probs = logits
+            input_len = torch.full(size=(1,), fill_value=log_probs.size(0), dtype=torch.long).to(device)
+            loss = criterion(log_probs, label, input_len, target_len)
+            pred_text = greedy_decoder(log_probs, idx2char)[0]
 
-        loss = criterion(log_probs, label, input_len, target_len)
+            # # Space probability inspection
+            # if " " in char2idx:
+            #     space_index = char2idx[" "]
+            #     with torch.no_grad():
+            #         space_probs = log_probs[:, 0, space_index].exp()
+            #         print("Space probs (top 10):", space_probs[:10].tolist())
+
         loss.backward()
         optimizer.step()
 
-        model.eval()
-        with torch.no_grad():
-            decoded = greedy_decoder(log_probs)
-        print(f"Epoch {epoch}: Loss={loss.item():.4f}, Pred={decoded[0]}, GT={args.gt_text}")
-        if decoded[0] == args.gt_text:
+        print(f"Epoch {epoch}: Loss={loss.item():.4f}, Pred={pred_text}, GT={gt_text}")
+        if pred_text == gt_text and args.break_on_success:
             print("Model overfitted!")
             break
         model.train()

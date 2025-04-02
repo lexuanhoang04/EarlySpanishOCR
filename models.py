@@ -111,7 +111,8 @@ class CRNN_ResNet18(nn.Module):
 
         lstm_out, _ = self.lstm(features)
         output = self.fc(self.dropout(lstm_out))
-        return output.log_softmax(2)
+        return output.log_softmax(2) # [W', B, num_classes]
+        # [T, B, num_classes]
         
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -130,3 +131,64 @@ class PositionalEncoding(nn.Module):
         returns: (T, B, d_model) with position added
         """
         return x + 0.1 * self.pe[:x.size(0)]
+
+class CRNN_ResNet18_Line(nn.Module):
+    def __init__(self, num_classes, lstm_hidden_size=256, lstm_layers=2, dropout=0.3):
+        super(CRNN_ResNet18_Line, self).__init__()
+        resnet = models.resnet18(pretrained=True)
+        self.cnn = nn.Sequential(*list(resnet.children())[:-3])  # [B, 256, H/8, W/8]
+        self.pool = nn.AdaptiveAvgPool2d((1, None))              # [B, 256, 1, W']
+        self.lstm = nn.LSTM(
+            input_size=256,
+            hidden_size=lstm_hidden_size,
+            num_layers=lstm_layers,
+            bidirectional=True,
+            dropout=dropout
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(lstm_hidden_size * 2, num_classes)
+
+    def forward(self, x):
+        x = self.cnn(x)               # [B, 256, H/8, W/8]
+        x = self.pool(x).squeeze(2)   # [B, 256, W']
+        x = x.permute(2, 0, 1)        # [W', B, 256]
+        x, _ = self.lstm(x)           # [W', B, 2*hidden]
+        x = self.fc(self.dropout(x))  # [W', B, num_classes]
+        return x.log_softmax(2)
+
+class TransformerOCR_Line(nn.Module):
+    def __init__(self, num_classes, d_model=512, nhead=8, num_layers=3):
+        super(TransformerOCR_Line, self).__init__()
+
+        # CNN Backbone (ResNet50 outputs 2048 channels)
+        backbone = models.resnet50(weights="IMAGENET1K_V1")
+        modules = list(backbone.children())[:-2]  # Remove avgpool & fc
+
+        # Reduce stride of the first block in layer4 to keep spatial resolution higher
+        modules[-1][0].conv2.stride = (1, 1)
+        modules[-1][0].downsample[0].stride = (1, 1)
+
+        self.cnn = nn.Sequential(*modules)
+
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, None))  # Output: (B, 2048, 1, W)
+        self.channel_projector = nn.Linear(2048, d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=False)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.pos_encoder = PositionalEncoding(d_model)
+        self.fc = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        features = self.cnn(x)                  # (B, 2048, H, W)
+        pooled = self.adaptive_pool(features)   # (B, 2048, 1, W)
+        squeezed = pooled.squeeze(2)            # (B, 2048, W)
+        squeezed = squeezed.permute(0, 2, 1)    # (B, W, 2048)
+
+        projected = self.channel_projector(squeezed)  # (B, W, d_model)
+        seq = projected.permute(1, 0, 2)              # (T, B, d_model)
+
+        encoded = self.transformer_encoder(self.pos_encoder(seq))  # (T, B, d_model)
+        logits = self.fc(encoded)                    # (T, B, C)
+
+        return logits.log_softmax(2)  

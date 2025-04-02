@@ -2,6 +2,7 @@ import json
 import argparse
 from PIL import Image
 from tqdm import tqdm
+import yaml
 
 import torch
 from torch import nn
@@ -16,7 +17,8 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.insert(0, os.getcwd())
-from models import TransformerOCR, CRNN, CRNN_ResNet18
+from models import TransformerOCR, CRNN, CRNN_ResNet18, TransformerOCR_Line
+from src.utils import greedy_decoder, setup_chars
 
 # -------------------- Global Configuration --------------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -30,11 +32,20 @@ EPOCHS = 10
 LEARNING_RATE = 1e-3
 MAX_LABEL_LEN = 32
 
-CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-CHAR2IDX = {c: i+1 for i, c in enumerate(CHARS)}
-CHAR2IDX[""] = 0
-IDX2CHAR = {i: c for c, i in CHAR2IDX.items()}
-NUM_CLASSES = len(CHAR2IDX)
+CHAR2IDX = {}
+IDX2CHAR = {}
+NUM_CLASSES = 0
+
+
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Setup character set
+    global CHAR2IDX, IDX2CHAR, NUM_CLASSES
+    chars, CHAR2IDX, IDX2CHAR, NUM_CLASSES = setup_chars(config)
+
+    return config
 
 # -------------------- Dataset --------------------
 class TextOCRDataset(Dataset):
@@ -44,7 +55,6 @@ class TextOCRDataset(Dataset):
         self.image_root = image_root
         self.imgs = self.data["imgs"]
         self.anns = list(self.data["anns"].values())
-
         used_ids = set()
         self.samples = []
         for ann in self.anns:
@@ -57,7 +67,6 @@ class TextOCRDataset(Dataset):
             if text != "." and text and all(c in CHAR2IDX for c in text):
                 self.samples.append((img_id, ann["bbox"], text))
                 used_ids.add(img_id)
-
         self.transform = transforms.Compose([
             transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
             transforms.ToTensor(),
@@ -70,6 +79,10 @@ class TextOCRDataset(Dataset):
         img_id, bbox, text = self.samples[idx]
         img_info = self.imgs[str(img_id)] if str(img_id) in self.imgs else self.imgs[img_id]
         img_path = os.path.join(self.image_root, os.path.basename(img_info["file_name"]))
+        # Text OCR structure
+        if not os.path.exists(img_path):
+            img_path = os.path.join(self.image_root, img_info["file_name"]) # for FUNSD
+            
         image = Image.open(img_path).convert("RGB")
         x, y, w, h = bbox
         cropped = image.crop((x, y, x + w, y + h))
@@ -87,22 +100,6 @@ def collate_fn(batch):
     labels_concat = torch.cat(labels)
     lengths = torch.tensor(lengths, dtype=torch.long)
     return images, labels_concat, lengths, texts
-
-
-def greedy_decoder(preds):
-    preds = preds.argmax(2)
-    decoded_texts = []
-    for seq in preds:
-        prev = 0
-        s = ""
-        for p in seq:
-            p = p.item()
-            if p != prev and p != 0:
-                s += IDX2CHAR[p]
-            prev = p
-        decoded_texts.append(s)
-    return decoded_texts
-
 
 def train_model(model, train_loader, criterion, optimizer, epochs, checkpoint=None, log=False):
     model.train()
@@ -128,7 +125,12 @@ def train_model(model, train_loader, criterion, optimizer, epochs, checkpoint=No
             total_loss += loss.item()
             progress_bar.set_postfix(loss=f"{loss.item():.4f}")
 
-            decoded = greedy_decoder(logits.permute(1, 0, 2))
+            # === Show a few predictions for debugging ===
+            if step == 0:
+                decoded_preds = greedy_decoder(log_probs, model.idx2char if hasattr(model, 'idx2char') else {})
+                print("\nSample predictions (first 5):")
+                for i in range(min(5, len(decoded_preds))):
+                    print(f"Pred: {decoded_preds[i]} | GT: {texts[i]}")
 
             # === Log shapes ===
             if step == 0 and log:
@@ -139,7 +141,6 @@ def train_model(model, train_loader, criterion, optimizer, epochs, checkpoint=No
                 print(f"  - input_lengths:   {input_lengths.shape} {input_lengths.tolist()}")
                 print(f"  - label_lengths:   {label_lengths.shape} {label_lengths.tolist()}")
                 print(f"  - Text GT sample:  {texts[0]}")
-
 
         print(f"Epoch [{epoch+1}/{epochs}] Avg Loss: {total_loss/len(train_loader):.4f}")
     torch.save(model.state_dict(), f"{checkpoint}")
@@ -157,16 +158,17 @@ def evaluate_model(model, test_loader, args):
         for images, labels_concat, label_lengths, texts in tqdm(test_loader, desc="Evaluating", unit="batch"):
             images = images.to(DEVICE)
             logits = model(images)
-            preds = greedy_decoder(logits.permute(1, 0, 2)) # [T, B, C] -> [B, T, C]
+            preds = greedy_decoder(logits.permute(1, 0, 2), IDX2CHAR) # [T, B, C] -> [B, T, C]
 
             all_preds.extend(preds)
             all_gt.extend(texts)
             for pred, gt in zip(preds, texts):
                 total_edits += editdistance.eval(pred, gt)
                 total_chars += len(gt)
-            for i in range(min(len(images), 3)):
-                TF.to_pil_image(images[i].cpu()).save(f"{args.vis_path}/debug_eval_{i}_{texts[i]}.png")
-                print(f"Saved: debug_eval_{i}_{texts[i]}.png")
+            if args.debug:
+                for i in range(min(len(images), 3)):
+                    TF.to_pil_image(images[i].cpu()).save(f"{args.vis_path}/debug_eval_{i}_{texts[i]}.png")
+                    print(f"Saved: debug_eval_{i}_{texts[i]}.png")
             # in evaluate_model() or your test loop
 
     cer = total_edits / total_chars if total_chars > 0 else float('inf')
@@ -176,7 +178,7 @@ def evaluate_model(model, test_loader, args):
     print(f"Character Error Rate (CER): {cer:.4f}")
 
 
-def main(rank=0, world_size=1, is_ddp=False, args=None):
+def main(rank=0, world_size=1, is_ddp=False, args=None, config=None):
 
     global BATCH_SIZE, NUM_WORKERS, EPOCHS, IMG_WIDTH, LEARNING_RATE
     # === DDP setup ===
@@ -192,23 +194,27 @@ def main(rank=0, world_size=1, is_ddp=False, args=None):
     NUM_WORKERS = args.num_workers
     EPOCHS = args.epochs
     LEARNING_RATE = args.learning_rate
+    IMAGE_HEIGHT = args.img_height
 
     with open(args.json_train) as f:
         train_data = json.load(f)
     train_ids = list(train_data["imgs"].keys())
-    if args.max_train_images:
+    if args.max_train_images and args.max_train_images != "None":
         train_ids = train_ids[:args.max_train_images]
     train_ids = set(train_ids)
 
+    # print("Training file:", list(train_ids)[:5])
     with open(args.json_val) as f:
         val_data = json.load(f)
     val_ids = list(val_data["imgs"].keys())
-    if args.max_val_images:
+    if args.max_val_images and args.max_val_images != "None":
         val_ids = val_ids[:args.max_val_images]
     val_ids = set(val_ids)
 
     train_dataset = TextOCRDataset(args.json_train, args.image_root, allowed_image_ids=train_ids)
     val_dataset = TextOCRDataset(args.json_val, args.image_root, allowed_image_ids=val_ids)
+    
+    print("Training file:", args.json_train)
 
     if args.ddp:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
@@ -243,7 +249,8 @@ def main(rank=0, world_size=1, is_ddp=False, args=None):
         model = CRNN(NUM_CLASSES).to(device)
     elif args.model == "crnn_resnet18":
         model = CRNN_ResNet18(NUM_CLASSES).to(device)
-
+    elif args.model == "transformer_line":
+        model = TransformerOCR_Line(NUM_CLASSES).to(device)
     if args.ddp:
         model = DDP(model, device_ids=[rank])
 
@@ -276,35 +283,26 @@ def main(rank=0, world_size=1, is_ddp=False, args=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--json_train", type=str, required=True)
-    parser.add_argument("--json_val", type=str, required=True)
-    parser.add_argument("--image_root", type=str, required=True)
-
-    parser.add_argument("--epochs", type=int, default=EPOCHS)
-    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
-    parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
-    parser.add_argument("--max_train_images", type=int, default=None)
-    parser.add_argument("--max_val_images", type=int, default=None)
-    parser.add_argument("--learning_rate", type=float, default=LEARNING_RATE)
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/transformer_ocr.pth")
-
-    parser.add_argument("--print_results", action="store_true")
-    parser.add_argument("--visualize", action="store_true")
-    parser.add_argument("--log", action="store_true", help="Log shapes of tensors during training")
-
-    parser.add_argument("--model", choices=["transformer", "crnn", "crnn_resnet18"], default="crnn")
-    parser.add_argument("--img_width", type=int, default=IMG_WIDTH)
-    
+    parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--ddp", action="store_true")
-    parser.add_argument("--gpus", type=int, default=torch.cuda.device_count(), help="Number of GPUs to use for DDP")
-
-    parser.add_argument("--eval_only", action="store_true", help="Only run evaluation from checkpoint")
-    parser.add_argument("--vis_path", type=str, default="visualization", help="Path to save visualizations")
+    parser.add_argument("--gpus", type=int, default=torch.cuda.device_count())
+    parser.add_argument("--log", action="store_true")
+    parser.add_argument("--eval_only", action="store_true")
+    parser.add_argument("--print_results", action="store_true")
+    parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
 
+    # Load from YAML config
+    config = load_config(args.config)
+
+    # Merge YAML into args namespace
+    for k, v in config.items():
+        setattr(args, k, v)
+
+    # DDP or single-GPU entry point
     if args.ddp:
         world_size = min(args.gpus, torch.cuda.device_count())
-        mp.spawn(main, args=(world_size, True, args), nprocs=world_size)
+        mp.spawn(main, args=(world_size, True, args, config), nprocs=world_size)
     else:
-        main(args=args)
+        main(args=args, config=config)

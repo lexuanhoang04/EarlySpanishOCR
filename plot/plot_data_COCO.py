@@ -5,7 +5,8 @@ from PIL import Image, ImageDraw
 from pycocotools.coco import COCO
 from collections import defaultdict
 
-def visualize_gt(json_path, image_root, output_dir, max_imgs=5):
+def visualize_gt(json_path, image_root, output_dir, max_imgs=5, args=None):
+
     os.makedirs(output_dir, exist_ok=True)
     coco = COCO(json_path)
     img_ids = coco.getImgIds()
@@ -19,6 +20,8 @@ def visualize_gt(json_path, image_root, output_dir, max_imgs=5):
         ann_ids = coco.getAnnIds(imgIds=img_id)
         anns = coco.loadAnns(ann_ids)
         for ann in anns:
+            if args.only_text and ann['category_id'] != 0:
+                continue
             x, y, w, h = ann['bbox']
             draw.rectangle([x, y, x + w, y + h], outline='red', width=2)
 
@@ -26,7 +29,7 @@ def visualize_gt(json_path, image_root, output_dir, max_imgs=5):
         image.save(out_path)
         print(f"Saved: {out_path}")
 
-def visualize_eval(pred_json_path, gt_json_path, image_root, output_dir, max_imgs=5):
+def visualize_eval(pred_json_path, gt_json_path, image_root, output_dir, max_imgs=5, args=None):
     os.makedirs(output_dir, exist_ok=True)
     coco_gt = COCO(gt_json_path)
 
@@ -47,6 +50,8 @@ def visualize_eval(pred_json_path, gt_json_path, image_root, output_dir, max_img
         image = Image.open(img_path).convert("RGB")
         draw = ImageDraw.Draw(image)
         for ann in anns:
+            if args.only_text and ann['category_id'] != 0:
+                continue
             x, y, w, h = ann['bbox']
             draw.rectangle([x, y, x + w, y + h], outline='blue', width=2)
 
@@ -62,13 +67,15 @@ def main():
     parser.add_argument("--output_dir", required=True, help="Directory to save visualized outputs")
     parser.add_argument("--mode", choices=["gt", "eval", "gt_crop"], required=True, help="Visualization mode")
     parser.add_argument("--max_imgs", type=int, default=5)
+    parser.add_argument("--only_text", action="store_true", help="Only visualize text boxes")
+
     args = parser.parse_args()
 
     if args.mode == "gt":
-        visualize_gt(args.json, args.image_root, args.output_dir, args.max_imgs)
+        visualize_gt(args.json, args.image_root, args.output_dir, args.max_imgs, args)
     elif args.mode == "eval":
         if not args.gt_json:
             raise ValueError("In eval mode, --gt_json must be provided to get file names.")
-        visualize_eval(args.json, args.gt_json, args.image_root, args.output_dir, args.max_imgs)
+        visualize_eval(args.json, args.gt_json, args.image_root, args.output_dir, args.max_imgs, args)
 if __name__ == "__main__":
     main()
