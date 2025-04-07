@@ -7,19 +7,15 @@ This repository contains a two-stage Optical Character Recognition (OCR) pipelin
 
 ## Installation
 
-1. Clone the repository:
-
-   git clone https://github.com/yourusername/ocr-pipeline.git
-   cd ocr-pipeline
-
-2. Install dependencies:
-
-   uv pip install -r requirements.txt
+1. Install dependencies:
+   
+   pip install -r requirements.txt
 
    Note: PyTorch must be installed separately. Please follow the official guide here:
    https://pytorch.org/get-started/locally/
 
-3. Download pretrained weights from this link and put in the folder checkpoints
+   Pytorch 2.1.0
+2. Download pretrained weights from this link and put in the folder checkpoints
 
    [https://drive.google.com/drive/folders/19K3sCv3esTawo7QiO-0BHwUYbT-kGXwy?usp=sharing]
 
