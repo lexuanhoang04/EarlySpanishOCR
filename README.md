@@ -1,40 +1,36 @@
-# EarlySpanishOCR
-OCR Pipeline: DBNet + Transformer
+# OCR Pipeline: DBNet + Transformer
+
 This repository contains a two-stage Optical Character Recognition (OCR) pipeline:
 
-Text Detection – using DBNet.
+1. Text Detection – using DBNet: https://github.com/MhLiao/DBNet
+2. Text Recognition – using a Transformer-based model
 
-Text Recognition – using a Transformer-based model.
+## Installation
 
-📦 Installation
-Clone the repository:
+1. Clone the repository:
 
-bash
-Copy
-Edit
-git clone https://github.com/yourusername/ocr-pipeline.git
-cd ocr-pipeline
-Install dependencies:
+   git clone https://github.com/yourusername/ocr-pipeline.git
+   cd ocr-pipeline
 
-bash
-Copy
-Edit
-uv pip freeze > requirements.txt  # or use the provided one
-uv pip install -r requirements.txt
-Note: PyTorch must be installed separately. Follow the official PyTorch installation guide to install the correct version for your system.
+2. Install dependencies:
 
-Download pretrained weights:
+   uv pip install -r requirements.txt
 
-Model Weights Download Link
+   Note: PyTorch must be installed separately. Please follow the official guide here:
+   https://pytorch.org/get-started/locally/
 
-🧠 Pipeline Overview
-Stage 1: Text Detection
+3. Download pretrained weights from this link:
 
-Utilizes DBNet to detect word-level text regions.
+   [insert your weights link here]
 
-Stage 2: Text Recognition
+## Pipeline Overview
 
-Applies a Transformer-based architecture to recognize text from cropped regions.
+- Stage 1: Text Detection  
+  Uses DBNet to detect word-level text regions.
 
-📄 Usage
+- Stage 2: Text Recognition  
+  A Transformer-based model recognizes text from the detected regions.
+
+## Usage
+
 Coming soon.
