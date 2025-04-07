@@ -21,7 +21,7 @@ This repository contains a two-stage Optical Character Recognition (OCR) pipelin
 
 3. Download pretrained weights from this link:
 
-   [insert your weights link here]
+   [https://drive.google.com/drive/folders/19K3sCv3esTawo7QiO-0BHwUYbT-kGXwy?usp=sharing]
 
 ## Pipeline Overview
 
@@ -31,6 +31,8 @@ This repository contains a two-stage Optical Character Recognition (OCR) pipelin
 - Stage 2: Text Recognition  
   A Transformer-based model recognizes text from the detected regions.
 
-## Usage
+## Image preprocessing
+Run this script
+```bash
+python src/preprocess.py --pdf_folder dataset/scans --output_folder dataset/images
 
-Coming soon.
