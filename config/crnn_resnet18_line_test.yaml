@@ -1,0 +1,16 @@
+json_train: "json/FUNSD/funsd_train_lines_filtered.json"
+json_val: "json/FUNSD/funsd_val_lines_filtered.json"
+image_root: "dataset/FUNSD/images"
+epochs: 800
+batch_size: 32
+num_workers: 4
+learning_rate: 0.001
+model: "crnn_resnet18_line"
+dataset: "FUNSD"
+checkpoint: "checkpoints/crnn_resnet18_funsd.pth"
+img_height: 32
+img_width: 320
+max_train_images: none
+max_val_images: none
+chars: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:'\\\",.<>?/`~\\ "
+vis_path: "vis/funsd_crnn_resnet18_line"

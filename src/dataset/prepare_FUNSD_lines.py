@@ -4,15 +4,16 @@ from tqdm import tqdm
 from PIL import Image
 
 
-def convert_funsd_to_exact_textocr_format(annotations_dir, images_dir, output_json_path):
+def convert_funsd_to_exact_textocr_format(annotations_dir, images_dir, output_json_path, max_images=None):
     imgs = {}
     anns = {}
     ann_id = 0
 
-    for fname in tqdm(os.listdir(annotations_dir)):
-        if not fname.endswith(".json"):
-            continue
+    annotation_files = [f for f in os.listdir(annotations_dir) if f.endswith(".json")]
+    if max_images is not None:
+        annotation_files = annotation_files[:max_images]
 
+    for fname in tqdm(annotation_files, desc=f"Processing {annotations_dir}"):
         with open(os.path.join(annotations_dir, fname), "r") as f:
             anno = json.load(f)
 
@@ -27,7 +28,6 @@ def convert_funsd_to_exact_textocr_format(annotations_dir, images_dir, output_js
             continue
 
         # Save image metadata
-        # Split path and take last 3 components
         path_components = image_path.split(os.sep)
         file_name = os.path.join(*path_components[-3:]) if len(path_components) >= 3 else image_path
 
@@ -64,7 +64,7 @@ def convert_funsd_to_exact_textocr_format(annotations_dir, images_dir, output_js
             anns[str(ann_id)] = {
                 "id": ann_id,
                 "image_id": image_id,
-                "utf8_string": text,         # ✅ required by TextOCRDataset             # optional / for completeness
+                "utf8_string": text,
                 "bbox": [x1, y1, x2, y2]
             }
             ann_id += 1
@@ -74,6 +74,7 @@ def convert_funsd_to_exact_textocr_format(annotations_dir, images_dir, output_js
         "anns": anns
     }
 
+    os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
     with open(output_json_path, "w") as out_f:
         json.dump(output, out_f, indent=2)
 
@@ -84,11 +85,13 @@ if __name__ == "__main__":
     convert_funsd_to_exact_textocr_format(
         annotations_dir="dataset/FUNSD/training_data/annotations",
         images_dir="dataset/FUNSD/training_data/images",
-        output_json_path="json/FUNSD/funsd_train_textocr_style_filtered.json"
+        output_json_path="json/FUNSD/funsd_train_textocr_style_filtered_1.json",
+        max_images=1  # 👈 change this to test with fewer images
     )
 
     convert_funsd_to_exact_textocr_format(
         annotations_dir="dataset/FUNSD/testing_data/annotations",
         images_dir="dataset/FUNSD/testing_data/images",
-        output_json_path="json/FUNSD/funsd_val_textocr_style_filtered.json"
+        output_json_path="json/FUNSD/funsd_val_textocr_style_filtered_5.json",
+        max_images=5  # 👈 change this to test with fewer images
     )

@@ -1,0 +1,15 @@
+json_train: "dataset/TextOCR/TextOCR_0.1_train.json"
+json_val: "dataset/TextOCR/TextOCR_0.1_val.json"
+image_root: "dataset/TextOCR/train_val_images/train_images"
+epochs: 50
+batch_size: 64
+num_workers: 4
+learning_rate: 0.001
+model: "crnn_resnet18"
+checkpoint: "checkpoints/crnn_resnet18_full.pth"
+img_width: 128
+img_height: 32
+max_train_images: null
+max_val_images: null
+chars: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+vis_path: "vis/CRNN_ResNet18_eval"

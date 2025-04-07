@@ -1,0 +1,21 @@
+json_train: "json/FUNSD/funsd_train_textocr_style_filtered.json"
+json_val: "json/FUNSD/funsd_val_textocr_style_filtered.json"
+image_root: "dataset/FUNSD"
+
+epochs: 1000
+batch_size: 1
+num_workers: 0
+learning_rate: 0.0005
+model: "transformer_attention"
+dataset: "FUNSD"
+checkpoint: "checkpoints/overfit_attention.pth"
+
+img_height: 32
+img_width: 512
+max_train_images: 1
+max_val_images: 1
+
+chars: "<pad><sos><eos>abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:'\\\",.<>?/`~ "
+
+vis_path: "vis/overfit_attention"
+print_results: True

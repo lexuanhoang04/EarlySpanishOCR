@@ -1,0 +1,16 @@
+json_train: "dataset/TextOCR/TextOCR_0.1_train.json"
+json_val: "dataset/TextOCR/TextOCR_0.1_val.json"
+image_root: "dataset/TextOCR/train_val_images/train_images"
+epochs: 15
+batch_size: 64
+num_workers: 4
+learning_rate: 0.0001
+model: "transformer"
+checkpoint: "checkpoints/transformer_word_full_3.pth"
+img_width: 256
+img_height: 32
+max_train_images: null
+max_val_images: null
+chars: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ÑñÇçſ"
+vis_path: "vis/transformer_word"
+print_results: True

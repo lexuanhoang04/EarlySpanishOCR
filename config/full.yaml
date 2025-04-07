@@ -5,6 +5,5 @@ epochs: 15
 num_workers: 4
 img_height: 32
 img_width: 128
-train_json: dataset/TextOCR/TextOCR_0.1_train.json
-val_json: dataset/TextOCR/TextOCR_0.1_val.json
 image_root: dataset/TextOCR/train_val_images/train_images
+max_samples: 100000000
